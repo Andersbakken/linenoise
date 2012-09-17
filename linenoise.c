@@ -482,7 +482,7 @@ static int linenoisePrompt(int fd, char *buf, size_t buflen, const char *prompt)
             linenoiseClearScreen();
             refreshLine(fd,prompt,buf,len,pos,cols);
             break;
-        case 18: // control-r
+        case 18: /* ctrl+r */
             if (!history_search)
                 history_search = calloc(1, sizeof(char));
             linenoiseHistorySearch(fd, cols);
@@ -615,7 +615,7 @@ int linenoiseHistorySave(char *filename) {
 int linenoiseHistoryLoad(char *filename) {
     FILE *fp = fopen(filename,"r");
     char buf[LINENOISE_MAX_LINE];
-
+q
     if (fp == NULL) return -1;
 
     while (fgets(buf,LINENOISE_MAX_LINE,fp) != NULL) {
