@@ -108,6 +108,8 @@ static int atexit_registered = 0; /* register atexit just 1 time */
 static int history_max_len = LINENOISE_DEFAULT_HISTORY_MAX_LEN;
 static int history_len = 0;
 char **history = NULL;
+char *history_search = NULL;
+int history_search_len = 0;
 
 static void linenoiseAtExit(void);
 int linenoiseHistoryAdd(const char *line);
@@ -189,7 +191,7 @@ static int getColumns(void) {
 static void refreshLine(int fd, const char *prompt, char *buf, size_t len, size_t pos, size_t cols) {
     char seq[64];
     size_t plen = strlen(prompt);
-    
+
     while((plen+pos) >= cols) {
         buf++;
         len--;
@@ -281,6 +283,10 @@ static int completeLine(int fd, const char *prompt, char *buf, size_t buflen, si
     return c; /* Return last read character */
 }
 
+void linenoiseHistorySearch(int fd, int cols) {
+    refreshLine(fd,"(reverse-i-search)`': ",0,0,0,cols);
+}
+
 void linenoiseClearScreen(void) {
     if (write(STDIN_FILENO,"\x1b[H\x1b[2J",7) <= 0) {
         /* nothing to do, just to avoid warning. */
@@ -300,7 +306,7 @@ static int linenoisePrompt(int fd, char *buf, size_t buflen, const char *prompt)
     /* The latest history entry is always our current buffer, that
      * initially is just an empty string. */
     linenoiseHistoryAdd("");
-    
+
     if (write(fd,prompt,plen) == -1) return -1;
     while(1) {
         char c;
@@ -374,21 +380,21 @@ static int linenoisePrompt(int fd, char *buf, size_t buflen, const char *prompt)
         case 27:    /* escape sequence */
             if (read(fd,seq,2) == -1) break;
             if (seq[0] == 91 && seq[1] == 68) {
-left_arrow:
+          left_arrow:
                 /* left arrow */
                 if (pos > 0) {
                     pos--;
                     refreshLine(fd,prompt,buf,len,pos,cols);
                 }
             } else if (seq[0] == 91 && seq[1] == 67) {
-right_arrow:
+          right_arrow:
                 /* right arrow */
                 if (pos != len) {
                     pos++;
                     refreshLine(fd,prompt,buf,len,pos,cols);
                 }
             } else if (seq[0] == 91 && (seq[1] == 65 || seq[1] == 66)) {
-up_down_arrow:
+          up_down_arrow:
                 /* up and down arrow: history */
                 if (history_len > 1) {
                     /* Update the current history entry before to
@@ -425,6 +431,13 @@ up_down_arrow:
             break;
         default:
             if (len < buflen) {
+                if (history_search) {
+                    history_search = realloc(history_search, history_search_len + 1);
+                    history_search[history_search_len - 1] = c;
+                    history_search[history_search_len++] = '\0';
+                    linenoiseHistorySearch(fd, cols);
+                    break;
+                }
                 if (len == pos) {
                     buf[pos] = c;
                     pos++;
@@ -468,6 +481,12 @@ up_down_arrow:
         case 12: /* ctrl+l, clear screen */
             linenoiseClearScreen();
             refreshLine(fd,prompt,buf,len,pos,cols);
+            break;
+        case 18: // control-r
+            if (!history_search)
+                history_search = calloc(1, sizeof(char));
+            linenoiseHistorySearch(fd, cols);
+            break;
         }
     }
     return len;
