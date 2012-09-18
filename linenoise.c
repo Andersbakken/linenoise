@@ -97,7 +97,7 @@
 #include <unistd.h>
 #include "linenoise.h"
 
-#define LINENOISE_DEFAULT_HISTORY_MAX_LEN 100
+#define LINENOISE_DEFAULT_HISTORY_MAX_LEN 1024
 #define LINENOISE_MAX_LINE 4096
 static char *unsupported_term[] = {"dumb","cons25",NULL};
 static linenoiseCompletionCallback *completionCallback = NULL;
@@ -107,9 +107,8 @@ static int rawmode = 0; /* for atexit() function to check if restore is needed*/
 static int atexit_registered = 0; /* register atexit just 1 time */
 static int history_max_len = LINENOISE_DEFAULT_HISTORY_MAX_LEN;
 static int history_len = 0;
+static int in_history_search = -1;
 char **history = NULL;
-char *history_search = NULL;
-int history_search_len = 0;
 
 static void linenoiseAtExit(void);
 int linenoiseHistoryAdd(const char *line);
@@ -283,8 +282,21 @@ static int completeLine(int fd, const char *prompt, char *buf, size_t buflen, si
     return c; /* Return last read character */
 }
 
-void linenoiseHistorySearch(int fd, int cols) {
-    refreshLine(fd,"(reverse-i-search)`': ",0,0,0,cols);
+static void history_search(int fd, char *buf, size_t len, size_t pos, size_t cols) {
+    if (!buf || !history_len) {
+        refreshLine(fd,"(reverse-i-search)`': ",0,0,0,cols);
+    } else {
+        int idx = history_len - 1;
+        while (idx >= 0 && !strstr(history[idx], buf)) {
+            --idx;
+        }
+        char buffer[1024];
+        snprintf(buffer, sizeof(buffer), "(reverse-i-search)` %s': ", buf);
+        char nomatch[] = { '\0' };
+        char *match = idx >= 0 ? history[idx] : nomatch;
+        const int l = strlen(match);
+        refreshLine(fd,buffer,match,l,l,cols);
+    }
 }
 
 void linenoiseClearScreen(void) {
@@ -335,6 +347,10 @@ static int linenoisePrompt(int fd, char *buf, size_t buflen, const char *prompt)
         case 3:     /* ctrl-c */
             errno = EAGAIN;
             return -1;
+        case 7:     /* ctrl-g */
+            in_history_search = -1;
+            refreshLine(fd,prompt,buf,0,0,cols);
+            break;
         case 127:   /* backspace */
         case 8:     /* ctrl-h */
             if (pos > 0 && len > 0) {
@@ -431,19 +447,21 @@ static int linenoisePrompt(int fd, char *buf, size_t buflen, const char *prompt)
             break;
         default:
             if (len < buflen) {
-                if (history_search) {
-                    history_search = realloc(history_search, history_search_len + 1);
-                    history_search[history_search_len - 1] = c;
-                    history_search[history_search_len++] = '\0';
-                    linenoiseHistorySearch(fd, cols);
-                    break;
-                }
+                /* if (history_search) { */
+                /*     history_search = realloc(history_search, history_search_len + 1); */
+                /*     history_search[history_search_len - 1] = c; */
+                /*     history_search[history_search_len++] = '\0'; */
+                /*     linenoiseHistorySearch(fd, cols); */
+                /*     break; */
+                /* } */
                 if (len == pos) {
                     buf[pos] = c;
                     pos++;
                     len++;
                     buf[len] = '\0';
-                    if (plen+len < cols) {
+                    if (in_history_search != -1) {
+                        history_search(fd,buf,len,pos,cols);
+                    } else if (plen+len < cols) {
                         /* Avoid a full update of the line in the
                          * trivial case. */
                         if (write(fd,&c,1) == -1) return -1;
@@ -483,9 +501,12 @@ static int linenoisePrompt(int fd, char *buf, size_t buflen, const char *prompt)
             refreshLine(fd,prompt,buf,len,pos,cols);
             break;
         case 18: /* ctrl+r */
-            if (!history_search)
-                history_search = calloc(1, sizeof(char));
-            linenoiseHistorySearch(fd, cols);
+            if (in_history_search == -1) {
+                in_history_search = 0;
+                history_search(fd,0,0,0,cols);
+            } else { // need to search further
+
+            }
             break;
         }
     }
@@ -615,7 +636,7 @@ int linenoiseHistorySave(char *filename) {
 int linenoiseHistoryLoad(char *filename) {
     FILE *fp = fopen(filename,"r");
     char buf[LINENOISE_MAX_LINE];
-q
+
     if (fp == NULL) return -1;
 
     while (fgets(buf,LINENOISE_MAX_LINE,fp) != NULL) {
